@@ -1,0 +1,7 @@
+name: 'Payment EnZona'
+type: module
+description: 'Módulo que integra tiendas genéricas con la plataforma de pago EnZona.'
+package: 'Payment EnZona'
+core_version_requirement: ^9 || ^10 || ^11
+dependencies:
+  - drupal:serialization

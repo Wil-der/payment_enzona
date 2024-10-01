@@ -1,0 +1,31 @@
+payment_enzona.checkout:
+  path: '/payment'
+  defaults:
+    _controller: '\Drupal\payment_enzona\Controller\PaymentController::checkout'
+    _title: 'Payment EnZona'
+  requirements:
+    _permission: 'access content'
+
+payment_enzona.key_form:
+  path: '/admin/config/payment-enzona/keys'
+  defaults:
+    _form: '\Drupal\payment_enzona\Form\KeyForm'
+    _title: 'Configuración de Claves'
+  requirements:
+    _permission: 'administer site configuration'
+
+payment_enzona.paySuccess:
+  path: '/payment/pay-success'
+  defaults:
+    _controller: '\Drupal\payment_enzona\Controller\PaymentController::paySuccess'
+    _title: 'Completar pago'
+  requirements:
+    _permission: 'access content'
+
+payment_enzona.payCancel:
+  path: '/payment/pay-cancel'
+  defaults:
+    _controller: '\Drupal\payment_enzona\Controller\PaymentController::payCancel'
+    _title: 'Cancelar pago'
+  requirements:
+    _permission: 'access content'

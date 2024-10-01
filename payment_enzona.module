@@ -1,0 +1,15 @@
+<?php
+
+/**
+ * Implements hook_install().
+ */
+
+function payment_enzona_install()
+{
+  \Drupal::configFactory()->getEditable('payment_enzona.settings')
+    ->set('public_key', '')
+    ->set('secret_key', '')
+    ->save();
+
+  \Drupal::messenger()->addMessage('El módulo ha sido instalado. Por favor, configure las claves en /admin/config/payment-enzona/keys.');
+}
