@@ -51,8 +51,8 @@ class KeyForm extends ConfigFormBase
             ->set('secret_key', $form_state->getValue('secret_key'))
             ->save();
 
-        $url = Url::fromRoute('payment_enzona.enviar_api');
-
+        $url = Url::fromRoute('payment_enzona.checkout');
+        
         $form_state->setRedirectUrl($url);
     }
 }

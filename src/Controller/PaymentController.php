@@ -5,12 +5,13 @@ namespace Drupal\payment_enzona\Controller;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Controller\ControllerBase;
 use Drupal\Core\Url;
+use Drupal\node\Entity\Node;
 use GuzzleHttp\Client;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\RedirectResponse;
-use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpFoundation\Session\SessionInterface;
+use Drupal\paymenet_enzona\Other\Validations;
 
 class PaymentController extends ControllerBase
 {
@@ -18,100 +19,104 @@ class PaymentController extends ControllerBase
   protected $session;
   protected $httpClient;
   protected $configFactory;
+  protected $validate;
 
   public function __construct(SessionInterface $session, ConfigFactoryInterface $config_factory)
   {
     $this->session = $session;
     $this->httpClient = new Client();
     $this->configFactory = $config_factory;
+    $this->validate = new Validations;
   }
 
-  public function checkout(Request $request)
+  public function checkout(array $cart)
   {
+    $node_ids = [];
+    foreach ($cart as $item) {
+      if (isset($item['id']) && isset($item['quantity'])) {
+          $node_ids[] = $item['id'];
+      }
+  }
+
+    $nodes = Node::loadMultiple($node_ids);
+
+    if (empty($nodes)) {
+      return new Response('Ningún nodo encontrado.', 404);
+    }
+
     $errors = [];
-    $data = json_decode($request->getContent(), TRUE);
+    $itemPayload = [];
+    $total = 0;
 
-    $description = $data['description'] ?? '';
-    if (empty($description)) {
-      $errors[] = 'La descripción es obligatoria.';
+    foreach ($nodes as $node) {
+
+      $validation = $this->validate->validateNode($node);
+
+      if (!empty($validation)) {
+        $errors[] = $validation;
+      } else {
+        $quantity = 0;
+        foreach($cart as $item){
+          if($item['id'] == $node->id()){
+            $quantity = $item['quantity'];
+            break;
+          }
+        }
+
+        $itemPayload[] = [
+          "name" => $node->get('field_name')->value,
+          "description" => $node->get('field_description')->value,
+          "quantity" => $quantity,
+          "price" => $node->get('field_quantity')->value,
+          "tax" => $node->get('field_tax')->value,
+        ];
+      }
     }
-
-    $currency = $data['currency'] ?? '';
-    if (empty($currency)) {
-      $errors[] = 'La moneda es obligatoria.';
-    }
-
-    $total = $data['amount']['total'] ?? '';
-    if (empty($total) || !is_numeric($total)) {
-      $errors[] = 'El total debe ser un número válido.';
-    }
-
-    $shipping = $data['amount']['details']['shipping'] ?? 0;
-    $tax = $data['amount']['details']['tax'] ?? 0;
-    $discount = $data['amount']['details']['discount'] ?? 0;
-    $tip = $data['amount']['details']['tip'] ?? 0;
-
-    $itemName = $data['items'][0]['name'] ?? '';
-    if (empty($itemName)) {
-      $errors[] = 'El nombre del ítem es obligatorio.';
-    }
-
-    $itemDescription = $data['items'][0]['description'] ?? '';
-    $itemQuantity = $data['items'][0]['quantity'] ?? '';
-    if (empty($itemQuantity) || !is_numeric($itemQuantity) || $itemQuantity <= 0) {
-      $errors[] = 'La cantidad del ítem debe ser un número positivo.';
-    }
-
-    $itemPrice = $data['items'][0]['price'] ?? '';
-    if (empty($itemPrice) || !is_numeric($itemPrice)) {
-      $errors[] = 'El precio del ítem debe ser un número válido.';
-    }
-
-    $merchantOpId = $data['merchant_op_id'] ?? '';
-    $invoiceNumber = $data['invoice_number'] ?? '';
-    $terminalId = $data['terminal_id'] ?? '';
-
 
     if (!empty($errors)) {
       return new Response(implode('<br>', $errors), 400);
     }
 
-    $payload = array(
-      "description" => $description,
-      "currency" => $currency,
-      "amount" => array(
+    foreach ($itemPayload as $item) {
+      $total += $item['price'] * $item['quantity'];
+  }
+    // Valores predeterminados
+    $shipping = 0; // Monto del envío
+    $tax = 0; // Monto de impuesto
+    $discount = 0; // Descuento
+    $tip = 0; // Propina
+
+    // Preparar el payload para la API.
+    $payload = [
+      "description" => "Descripción del pago: " . implode(", ", array_column($itemPayload, 'name')),
+      "currency" => "CUP", // Tipo de moneda por defecto
+      "amount" => [
         "total" => $total,
-        "details" => array(
+        "details" => [
           "shipping" => $shipping,
           "tax" => $tax,
           "discount" => $discount,
           "tip" => $tip
-        )
-      ),
-      "items" => array(
-        array(
-          "name" => $itemName,
-          "description" => $itemDescription,
-          "quantity" => $itemQuantity,
-          "price" => $itemPrice,
-          "tax" => $tax
-        )
-      ),
-      "merchant_op_id" => $merchantOpId,
-      "invoice_number" => $invoiceNumber,
-      "return_url" => 'url de return',
-      "cancel_url" => 'url de cancelar',
-      "terminal_id" => $terminalId,
-      "buyer_identity_code" => ""
-    );
+        ]
+      ],
+      "items" => $itemPayload,
+      "merchant_op_id" => '123456', // Identificador de la operación del comercio
+      "invoice_number" => 'INV-' . time(), // Número de la factura
+      "return_url" => 'http://example.com/return', // URL de retorno
+      "cancel_url" => 'http://example.com/cancel', // URL de cancelación
+      "terminal_id" => 'TERMINAL-001', // Identificador del terminal
+      "buyer_identity_code" => '' // Código del comprador
+    ];
 
+    // Llamar al método para procesar el pago.
     $this->payMake($payload);
   }
+
+
 
   //OBTENER   token
   public function getToken()
   {
-    dump('entro a getToken');
     $config = $this->configFactory->get('payment_enzona.settings');
     $public_key = $config->get('public_key');
     $secret_key = $config->get('secret_key');
@@ -124,7 +129,7 @@ class PaymentController extends ControllerBase
     $url = 'https://apisandbox.enzona.net/token';
 
     try {
-      dump('entro al try');
+      //aki se parte pq no se conecta a la api
       $response = $this->httpClient->post($url, [
         'headers' => [
           'Authorization' => 'Basic ' . base64_encode($public_key . ':' . $secret_key),
@@ -134,7 +139,6 @@ class PaymentController extends ControllerBase
           'grant_type' => 'client_credentials',
         ],
       ]);
-dump('se conecto con enzona');
       if ($response->getStatusCode() === 200) {
         $data = json_decode($response->getBody(), TRUE);
         return $data['access_token'];
@@ -148,7 +152,6 @@ dump('se conecto con enzona');
     }
   }
 
-
   //crear pago
   public function payMake($payload)
   {
@@ -158,7 +161,7 @@ dump('se conecto con enzona');
       return new JsonResponse(['Error' => 'No se pudo obtener el token de autenticación.'], 500);
     }
 
-    $url = 'https://apisandbox.enzona.net/payment/v1.0/payments';
+    $url = 'https://apisandbox.enzona.net/payment/payments';
 
     try {
       $response = $this->httpClient->post($url, [
@@ -188,7 +191,6 @@ dump('se conecto con enzona');
       return new JsonResponse(['Error' => 'Error al realizar el pago.'], 500);
     }
   }
-
 
   //completar pago
   public function paySuccess()
@@ -222,17 +224,17 @@ dump('se conecto con enzona');
     }
   }
 
-
   //cancelar pago
-  public function payCancel() {
+  public function payCancel()
+  {
     $transaction_uuid = $this->session->get('transaction_uuid');
-  
+
     if (!$transaction_uuid) {
       return new JsonResponse(['Error' => 'No se encontró el UUID de la transacción'], 400);
     }
-  
+
     $url = 'https://apisandbox.enzona.net/payments/' . $transaction_uuid . '/cancel';
-  
+
     try {
       $response = $this->httpClient->post($url, [
         'headers' => [
@@ -240,7 +242,7 @@ dump('se conecto con enzona');
           'Content-Type' => 'application/json',
         ],
       ]);
-  
+
       if ($response->getStatusCode() === 200) {
         return new JsonResponse(['Succes' => 'Pago cancelado con éxito'], 200);
       } else {
@@ -251,5 +253,5 @@ dump('se conecto con enzona');
       \Drupal::logger('payment_enzona')->error('Excepción al cancelar el pago: ' . $e->getMessage());
       return new JsonResponse(['Error' => 'Error al cancelar el pago.'], 500);
     }
-  }  
+  }
 }

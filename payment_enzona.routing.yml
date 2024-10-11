@@ -1,5 +1,5 @@
 payment_enzona.checkout:
-  path: '/payment'
+  path: '/payment/{cart}'
   defaults:
     _controller: '\Drupal\payment_enzona\Controller\PaymentController::checkout'
     _title: 'Payment EnZona'
