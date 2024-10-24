@@ -22,23 +22,23 @@ class QuantityBlock extends BlockBase
     protected $session;
     protected $messenger;
 
-    public function __construct(array $configuration, $plugin_id, $plugin_definition)
-    {
-        parent::__construct($configuration, $plugin_id, $plugin_definition);
-    }
+    // public function __construct(array $configuration, $plugin_id, $plugin_definition)
+    // {
+    //     parent::__construct($configuration, $plugin_id, $plugin_definition);
+    // }
 
 
-    public static function create(ContainerInterface $container)
-    {
-        // Crea una nueva instancia del bloque
-        return new static(
-            [],
-            'quantity_block',
-            [],
-            $container->get('session'),
-            $container->get('messenger')
-        );
-    }
+    // public static function create(ContainerInterface $container)
+    // {
+    //     // Crea una nueva instancia del bloque
+    //     return new static(
+    //         [],
+    //         'quantity_block',
+    //         [],
+    //         $container->get('session'),
+    //         $container->get('messenger')
+    //     );
+    // }
 
     public function build()
     {
