@@ -1,0 +1,160 @@
+#!/bin/bash
+
+# Script para detectar IPs duplicadas en TODAS las redes locales activas
+# (una interfaz = una red). Escanea 1-255 en cada red.
+
+LOG_FILE="/var/log/ip_duplicadas.log"
+
+# Función para obtener MAC addresses únicas en una interfaz específica
+obtener_macs() {
+    local ip=$1
+    local interfaz=$2
+    local macs=()
+
+    for i in {1..3}; do
+        mac=$(arping -c 1 -I "$interfaz" "$ip" 2>/dev/null | grep -o -E '([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}' | head -1)
+        if [[ -n "$mac" ]] && [[ ! " ${macs[@]} " =~ " ${mac} " ]]; then
+            macs+=("$mac")
+        fi
+        sleep 0.1
+    done
+    echo "${macs[@]}"
+}
+
+# Función principal
+main() {
+    # Verificar dependencias y permisos
+    if ! command -v arping &> /dev/null || [[ $EUID -ne 0 ]]; then
+        echo "verificacion={date=$(date +'%Y-%m-%d %H:%M:%S'), status=UNKNOWN, ip=, mac={}}" > "$LOG_FILE"
+        exit 0
+    fi
+
+    # Vaciar el log al inicio
+    > "$LOG_FILE"
+
+    local total_duplicates=0
+
+    # Recorrer todas las interfaces IPv4 activas (excepto lo)
+    while IFS= read -r linea; do
+        interfaz=$(echo "$linea" | awk '{print $2}')
+        ip_local=$(echo "$linea" | awk '{print $4}' | cut -d/ -f1)
+        red_local=$(echo "$ip_local" | cut -d. -f1-3)
+
+        echo "Escaneando red $red_local.0/24 en interfaz $interfaz"
+
+        for octeto in {1..255}; do
+            ip="$red_local.$octeto"
+
+            # Verificar duplicado en esta interfaz/red
+            if arping -c 1 -D -I "$interfaz" "$ip" 2>/dev/null | grep -q "Duplicate"; then
+                total_duplicates=$((total_duplicates + 1))
+                mac_array=($(obtener_macs "$ip" "$interfaz"))
+
+                # Formatear MACs
+                local mac_string="{}"
+                if [[ ${#mac_array[@]} -gt 0 ]]; then
+                    mac_string="{"
+                    for ((i=0; i<${#mac_array[@]}; i++)); do
+                        mac_string+="${mac_array[i]}"
+                        [[ $i -lt $((${#mac_array[@]}-1)) ]] && mac_string+=", "
+                    done
+                    mac_string+="}"
+                fi
+
+                # Escribir en el log
+                echo "verificacion={date=$(date +'%Y-%m-%d %H:%M:%S'), status=CRITICAL, interfaz=$interfaz, ip=$ip, mac=$mac_string}" >> "$LOG_FILE"
+            fi
+            sleep 0.05
+        done
+
+    done < <(ip -4 -o addr show | grep -v ' lo ')
+
+    # Si no hubo duplicados en ninguna red
+    if [[ $total_duplicates -eq 0 ]]; then
+        echo "verificacion={date=$(date +'%Y-%m-%d %H:%M:%S'), status=OK, ip=, mac={}}" >> "$LOG_FILE"
+    fi
+}
+
+main
+#-------------------------------------------------------------------------------------------------------------
+#!/bin/bash
+
+# Script para detectar TODAS las IPs duplicadas en la red (1-255)
+# Formato de salida: una línea por IP duplicada con todas sus MACs
+
+# Configuración
+LOG_FILE="/var/log/ip_duplicadas.log"
+RED_LOCAL=$(ip route | grep default | awk '{print $3}' | cut -d. -f1-3)
+INTERFAZ=$(ip route | grep default | awk '{print $5}')
+echo "$RED_LOCAL"
+echo "$INTERFAZ"
+# Función para obtener MAC addresses únicas
+obtener_macs() {
+    local ip=$1
+    local macs=()
+
+    for i in {1..3}; do
+        mac=$(arping -c 1 -I "$INTERFAZ" "$ip" 2>/dev/null | grep -o -E '([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}' | head -1)
+        if [[ -n "$mac" ]] && [[ ! " ${macs[@]} " =~ " ${mac} " ]]; then
+            macs+=("$mac")
+        fi
+        sleep 0.1
+    done
+    echo "${macs[@]}"
+}
+
+# Función principal
+main() {
+    # Verificar dependencias
+    if ! command -v arping &> /dev/null || [[ $EUID -ne 0 ]]; then
+        echo "verificacion={date=$(date +'%Y-%m-%d %H:%M:%S'), status=UNKNOWN, ip=, mac={}}" > "$LOG_FILE"
+        exit 0
+    fi
+
+    local duplicate_count=0
+    local status="OK"
+
+    # Vaciar el archivo log al inicio
+    > "$LOG_FILE"
+
+    # Escanear todas las IPs de la red (1-255)
+    for octeto in {1..255}; do
+        ip="$RED_LOCAL.$octeto"
+
+        # Verificar si la IP está duplicada
+        if arping -c 1 -D -I "$INTERFAZ" "$ip" 2>/dev/null | grep -q "Duplicate"; then
+            duplicate_count=$((duplicate_count + 1))
+            status="CRITICAL"
+
+            # Obtener MAC addresses
+            mac_array=($(obtener_macs "$ip"))
+
+            # Formatear MAC addresses para el log
+            local mac_string=""
+            if [[ ${#mac_array[@]} -gt 0 ]]; then
+                mac_string="{"
+                for ((i=0; i<${#mac_array[@]}; i++)); do
+                    mac_string+="${mac_array[i]}"
+                    [[ $i -lt $((${#mac_array[@]}-1)) ]] && mac_string+=", "
+                done
+                mac_string+="}"
+            else
+                mac_string="{}"
+            fi
+
+            # Escribir en el log para cada IP duplicada
+            echo "verificacion={date=$(date +'%Y-%m-%d %H:%M:%S'), status=$status, ip=$ip, mac=$mac_string}" >> "$LOG_FILE"
+        fi
+
+        # Pequeña pausa para no saturar la red
+        sleep 0.05
+    done
+
+    # Si no se encontraron duplicados, escribir una línea OK
+    if [[ $duplicate_count -eq 0 ]]; then
+        echo "verificacion={date=$(date +'%Y-%m-%d %H:%M:%S'), status=OK, ip=, mac={}}" >> "$LOG_FILE"
+    fi
+}
+
+# Ejecutar script
+main
